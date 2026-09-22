@@ -1,149 +1,104 @@
-"""
-prediction.py
-
-Handles:
-1. Loading saved model assets
-2. Preprocessing user input
-3. Prediction
-4. Probability estimation
-"""
-
 import joblib
 import pandas as pd
 
 
-class ChurnPredictor:
+# -----------------------------
+# Load trained artifacts
+# -----------------------------
+
+MODEL_PATH = "models/logistic_regression.pkl"
+SCALER_PATH = "models/scaler.pkl"
+FEATURE_COLUMNS_PATH = "models/feature_columns.pkl"
+
+
+model = joblib.load(MODEL_PATH)
+scaler = joblib.load(SCALER_PATH)
+feature_columns = joblib.load(FEATURE_COLUMNS_PATH)
+
+
+# -----------------------------
+# Prepare customer input
+# -----------------------------
+
+def prepare_input(customer_data):
     """
-    Customer Churn Prediction Engine
+    Convert raw customer information into the exact
+    feature format expected by the trained model.
     """
 
-    def __init__(
-        self,
-        model_path="models/logistic_regression.pkl",
-        scaler_path="models/scaler.pkl",
-        columns_path="models/feature_columns.pkl",
-    ):
+    df = pd.DataFrame([customer_data])
 
-        self.model = joblib.load(model_path)
-        self.scaler = joblib.load(scaler_path)
-        self.feature_columns = joblib.load(columns_path)
+    # Convert categorical variables into dummy variables
+    df = pd.get_dummies(df, drop_first=True, dtype=int)
 
-    # ----------------------------------------------------
+    # Match the exact columns and order used during training
+    df = df.reindex(columns=feature_columns, fill_value=0)
 
-    def preprocess_input(self, user_input: dict):
+    return df
 
-        """
-        Convert dictionary input
-        into model-ready dataframe.
-        """
 
-        data = pd.DataFrame([user_input])
+# -----------------------------
+# Predict churn
+# -----------------------------
 
-        # One-hot encoding
-        data = pd.get_dummies(
-            data,
-            drop_first=True,
-            dtype=int
-        )
+def predict_churn(customer_data):
+    """
+    Predict churn for a single customer.
 
-        # Match training columns
-        data = data.reindex(
-            columns=self.feature_columns,
-            fill_value=0
-        )
+    Returns:
+        prediction
+        churn_probability
+        risk_level
+    """
 
-        # Scaling
-        scaled = self.scaler.transform(data)
+    # Prepare input
+    features = prepare_input(customer_data)
 
-        scaled = pd.DataFrame(
-            scaled,
-            columns=self.feature_columns
-        )
+    # Scale while preserving feature names
+    features_scaled = pd.DataFrame(
+        scaler.transform(features),
+        columns=feature_columns,
+        index=features.index
+    )
 
-        return scaled
+    # Prediction
+    prediction = model.predict(features_scaled)[0]
 
-    # ----------------------------------------------------
+    # Probability of churn
+    probabilities = model.predict_proba(features_scaled)[0]
 
-    def predict(self, user_input: dict):
+    # Find probability corresponding to "Yes"
+    class_names = list(model.classes_)
 
-        processed = self.preprocess_input(user_input)
+    if "Yes" in class_names:
+        churn_index = class_names.index("Yes")
+        churn_probability = probabilities[churn_index]
+    else:
+        # Fallback in case model uses numeric labels
+        churn_probability = probabilities[1]
 
-        prediction = self.model.predict(processed)[0]
+    return {
+        "prediction": prediction,
+        "churn_probability": float(churn_probability),
+        "risk_level": get_risk_level(churn_probability)
+    }
 
-        probability = self.model.predict_proba(processed)[0]
 
-        churn_probability = probability[1]
+# -----------------------------
+# Risk classification
+# -----------------------------
 
-        stay_probability = probability[0]
+def get_risk_level(probability):
+    """
+    Convert churn probability into a business-friendly
+    risk category.
+    """
 
-        return {
+    if probability < 0.30:
+        return "Low Risk"
 
-            "prediction": prediction,
+    elif probability < 0.60:
+        return "Medium Risk"
 
-            "churn_probability": round(
-                churn_probability * 100,
-                2
-            ),
-
-            "stay_probability": round(
-                stay_probability * 100,
-                2
-            )
-
-        }
-
-    # ----------------------------------------------------
-
-    def get_risk_level(self, probability):
-
-        if probability >= 75:
-
-            return "High Risk 🔴"
-
-        elif probability >= 40:
-
-            return "Medium Risk 🟠"
-
-        else:
-
-            return "Low Risk 🟢"
-
-    # ----------------------------------------------------
-
-    def get_recommendation(self, probability):
-
-        if probability >= 75:
-
-            return [
-
-                "📞 Contact customer within 24 hours",
-
-                "🎁 Offer loyalty discount",
-
-                "📅 Recommend a long-term contract",
-
-                "👨‍💼 Assign customer success executive"
-
-            ]
-
-        elif probability >= 40:
-
-            return [
-
-                "📧 Send engagement email",
-
-                "🎁 Offer limited-period discount",
-
-                "📊 Monitor customer activity"
-
-            ]
-
-        else:
-
-            return [
-
-                "✅ Customer appears stable",
-
-                "📈 Continue regular engagement"
-
-            ]
+    else:
+        return "High Risk"
